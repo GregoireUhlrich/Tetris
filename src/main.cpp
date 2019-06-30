@@ -38,13 +38,17 @@ int main() {
     font.loadFromFile(
 "/home/uhlrich/.local/share/fonts/Ubuntu Mono derivative Powerline Bold.ttf");
 
-    sf::Text textScore(sf::String("Score: "), font, 40);
+    sf::Text textScore(sf::String("Score: "), font, 30);
     textScore.setFillColor(sf::Color::White);
-    textScore.setPosition(50, 25);
+    textScore.setPosition(30, 25);
 
-    sf::Text textTime(sf::String("Time: "), font, 40);
+    sf::Text textLine(sf::String("Line: "), font, 30);
+    textLine.setFillColor(sf::Color::White);
+    textLine.setPosition(280, 25);
+
+    sf::Text textTime(sf::String("Time: "), font, 30);
     textTime.setFillColor(sf::Color::White);
-    textTime.setPosition(370, 25);
+    textTime.setPosition(470, 25);
 
     sf::SoundBuffer buffer;
     sf::Sound sound;
@@ -79,12 +83,17 @@ int main() {
         textScore.setString(sout.str());
 
         ostringstream sout2;
-        sout2 << "Time : " << floor(game.getTotalTime());
-        textTime.setString(sout2.str());
+        sout2 << "Line : " << floor(game.getLine());
+        textLine.setString(sout2.str());
+
+        ostringstream sout3;
+        sout3 << "Time : " << floor(game.getTotalTime());
+        textTime.setString(sout3.str());
 
         window.draw(gameOutline);
         window.draw(gameSprite);
         window.draw(textScore);
+        window.draw(textLine);
         window.draw(textTime);
         window.display();
     }

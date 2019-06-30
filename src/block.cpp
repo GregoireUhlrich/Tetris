@@ -2,6 +2,8 @@
 
 using namespace std;
 
+int ColorGenerator::index = -1;
+
 TetrisShape::TetrisShape(TypeShape t_type, int t_size)
     :size(t_size), type(t_type)
 {
@@ -60,12 +62,12 @@ TetrisShape::TetrisShape(TypeShape t_type, int t_size)
         break;
     }
 
-    setFillColor(randomColor());
+    setFillColor(ColorGenerator::randomColor());
 }
 
-void TetrisShape::reset(TypeShape type)
+void TetrisShape::reset()
 {
-    *this = TetrisShape(type, size);
+    *this = TetrisShape(randomTypeShape(), size);
 }
 
 vector<sf::RectangleShape> TetrisShape::getShapes() const
@@ -114,17 +116,17 @@ void TetrisShape::drawMiniature(sf::RenderTarget* target) const
         case Square:
         case Line:
         case Cross:
-        case AngleL:
         case AngleR:
-        case StepR:
             x = 0;
             break;
-
+        case AngleL:
+        case StepR:
         case StepL:
             x = 1;
+            break;
     }
-    TetrisShape other(type);
-    other.setPosition(x, y);
+    TetrisShape other(*this);
+    other.setPosition(x, y+1);
     other.draw(target, 0);
 }
 
@@ -140,6 +142,22 @@ void TetrisShape::setFillColor(sf::Color color)
 {
     for (auto& block : blocks)
         block.setFillColor(color);
+}
+
+void TetrisShape::setGhostMode(bool mode)
+{
+    if (mode) {
+        for (auto& b : blocks) {
+            b.setOutlineColor(b.getFillColor());
+            b.setFillColor(sf::Color::Transparent);
+        }
+    }
+    else {
+        for (auto& b : blocks) {
+            b.setFillColor(b.getOutlineColor());
+            b.setOutlineColor(sf::Color::White);
+        }
+    }
 }
 
 void TetrisShape::moveLeft()
@@ -207,21 +225,43 @@ float invConvertPos(int pos)
 ///////////////////////////////////////////////////
 
 TetrisGame::TetrisGame(): shapeSize(DEFAULT_SIZE), gameSize(X_GAME, Y_GAME),
-    movingShape(randomTypeShape())
+    nextShape(randomTypeShape()), movingShape(randomTypeShape())
 {
+    font.loadFromFile(
+"/home/uhlrich/.local/share/fonts/Ubuntu Mono derivative Powerline Bold.ttf");
+    backupText = sf::Text("Backup", font, 25);
+    backupText.setFillColor(sf::Color::White);
+    nextText = sf::Text("Next", font, 25);
+    nextText.setFillColor(sf::Color::White);
+    backupText.setPosition(3,3);
+    nextText.setPosition(3,3);
     backupTexture = new sf::RenderTexture;
-    backupTexture->create(3*shapeSize, 4*shapeSize);
-    outlineBackup = sf::RectangleShape(sf::Vector2f(3*shapeSize, 4*shapeSize));
+    backupTexture->create(3*shapeSize, 4*shapeSize+shapeSize);
+    nextTexture = new sf::RenderTexture;
+    nextTexture->create(3*shapeSize, 4*shapeSize+shapeSize);
+    outlineBackup = sf::RectangleShape(sf::Vector2f(3*shapeSize,
+                4*shapeSize+shapeSize));
     outlineBackup.setFillColor(sf::Color::Transparent);
     outlineBackup.setOutlineColor(sf::Color(128,128,128,128));
     outlineBackup.setOutlineThickness(3);
-    outlineBackup.setPosition(10,10);
+    outlineBackup.setPosition(gameSize.x*shapeSize-3*shapeSize-10,10);
+    outlineNext = sf::RectangleShape(sf::Vector2f(3*shapeSize,
+                4*shapeSize+shapeSize));
+    outlineNext.setFillColor(sf::Color::Transparent);
+    outlineNext.setOutlineColor(sf::Color(128,128,128,128));
+    outlineNext.setOutlineThickness(3);
+    outlineNext.setPosition(10,10);
     placeMovingShape();
+    ghostShape.setGhostMode(true);
+    updateBackup();
+    updateGhost();
+    updateNext();
 }
 
 TetrisGame::~TetrisGame()
 {
     delete backupTexture;
+    delete nextTexture;
 }
 
 float TetrisGame::getTotalTime() const
@@ -231,7 +271,12 @@ float TetrisGame::getTotalTime() const
 
 int TetrisGame::getScore() const
 {
-    return score + floor(totalTime/100)*100;
+    return score + floor(totalTime/60)*250;
+}
+
+int TetrisGame::getLine() const
+{
+    return line;
 }
 
 void TetrisGame::setSound(sf::Sound* t_sound)
@@ -241,7 +286,7 @@ void TetrisGame::setSound(sf::Sound* t_sound)
 
 float TetrisGame::getFactor() const
 {
-    return pow(1.15, -floor(getScore()/500));
+    return pow(1.10, -floor(getScore()/1000));
 }
 
 void TetrisGame::placeMovingShape()
@@ -334,10 +379,16 @@ void TetrisGame::removeFullLines()
         // Here the line "full" is full
         if (colors[full] != sf::Color::White) {
             score += 5000;
+            int ymin = gameSize.y;
+            for (const auto& s : shapes)
+                if (convertPos(s.getPosition().y) < ymin)
+                    ymin = convertPos(s.getPosition().y);
+            line += gameSize.y-ymin;
             shapes.clear();
             return;
         }
-        scoreBonus += 100;
+        scoreBonus += 250;
+        ++line;
         for (size_t i = 0; i != shapes.size(); ++i) {
             size_t pos = convertPos(shapes[i].getPosition().y);
             if (pos == full) {
@@ -349,6 +400,27 @@ void TetrisGame::removeFullLines()
         }
     }
     score += scoreBonus;
+}
+
+void TetrisGame::sendNextShape()
+{
+    movingShape = nextShape;
+    nextShape.reset();
+    placeMovingShape();
+    updateNext();
+}
+
+void TetrisGame::parkShape()
+{
+    const vector<sf::RectangleShape>& newShapes 
+        = movingShape.getShapes();
+    shapes.insert(shapes.end(), newShapes.begin(), newShapes.end());
+    sendNextShape();
+    backupUsed = false;
+    removeFullLines();
+    updateGhost();
+    if (not freeMovingShape())
+        endGame();
 }
 
 void TetrisGame::endGame() 
@@ -371,20 +443,28 @@ void TetrisGame::handleEvent(sf::Event event)
     }
     if (event.type == sf::Event::KeyPressed) {
         if (event.key.code == sf::Keyboard::Left
-                and leftMoveLegit())
+                and leftMoveLegit()) {
             movingShape.moveLeft();
+            updateGhost();
+        }
         else if (event.key.code == sf::Keyboard::Right
-                and rightMoveLegit())
+                and rightMoveLegit()) {
             movingShape.moveRight();
+            updateGhost();
+        }
         else if (event.key.code == sf::Keyboard::A) {
             movingShape.rotate(false);
-            if (not freeMovingShape())
+            if (not freeMovingShape()) 
                 movingShape.rotate(true);
+            else
+                updateGhost();
         }
         else if (event.key.code == sf::Keyboard::Z) {
             movingShape.rotate(true);
-            if (not freeMovingShape())
+            if (not freeMovingShape()) 
                 movingShape.rotate(false);
+            else 
+                updateGhost();
         }
         else if (event.key.code == sf::Keyboard::Up 
                 and not backupUsed) {
@@ -392,17 +472,24 @@ void TetrisGame::handleEvent(sf::Event event)
             if (not backup) {
                 backup = true;
                 backupShape = movingShape;
-                movingShape.reset(randomTypeShape());
-                placeMovingShape();
+                sendNextShape();
             }
             else {
                 swap(backupShape, movingShape);
                 placeMovingShape();
             }
-            setBackup();
+            updateBackup();
+            updateGhost();
         }
         else if (event.key.code == sf::Keyboard::Escape) {
             running = false;
+        }
+        else if (event.key.code == sf::Keyboard::Space) {
+            while (downMoveLegit()) {
+                movingShape.moveDown();
+                ++score;
+            }
+            parkShape();
         }
     }
 }
@@ -410,7 +497,12 @@ void TetrisGame::handleEvent(sf::Event event)
 void TetrisGame::update(float elapsedTime)
 {
     bool move = false;
-    time += elapsedTime;
+    bool downLegit = downMoveLegit();
+    if (downLegit)
+        time += elapsedTime;
+    else
+        time += elapsedTime / 3;
+
     totalTime += elapsedTime;
     if (sf::Keyboard::isKeyPressed(sf::Keyboard::Down)) 
         effThreshold = thresholdMove / 5;
@@ -421,18 +513,12 @@ void TetrisGame::update(float elapsedTime)
         move = true;
     }
     if (move) {
-        if (downMoveLegit())
+        if (downLegit) {
             movingShape.moveDown();
+            ++score;
+        }
         else {
-            const vector<sf::RectangleShape>& newShapes 
-                = movingShape.getShapes();
-            shapes.insert(shapes.end(), newShapes.begin(), newShapes.end());
-            movingShape.reset(randomTypeShape());
-            backupUsed = false;
-            removeFullLines();
-            placeMovingShape();
-            if (not freeMovingShape())
-                endGame();
+            parkShape();
         }
     }
 }
@@ -441,12 +527,14 @@ void TetrisGame::draw(sf::RenderTarget* target, float elapsedTime)
 {
     if (running)
         update(elapsedTime);
-    movingShape.draw(target, elapsedTime);
     for (const auto& s : shapes)
         target->draw(s);
-    if (backup) 
-        target->draw(backupSprite);
+    ghostShape.draw(target, elapsedTime);
+    movingShape.draw(target, elapsedTime);
+    target->draw(backupSprite);
     target->draw(outlineBackup);
+    target->draw(nextSprite);
+    target->draw(outlineNext);
     if (not running and game) {
         sf::Font font;
         font.loadFromFile(
@@ -478,12 +566,34 @@ void TetrisGame::draw(sf::RenderTarget* target, float elapsedTime)
     }
 }
 
-void TetrisGame::setBackup()
+void TetrisGame::updateBackup()
 {
     backupTexture->clear(sf::Color::Transparent);
     backupShape.drawMiniature(backupTexture);
+    backupTexture->draw(backupText);
     backupTexture->display();
     backupSprite.setTexture(backupTexture->getTexture());
     backupSprite.setPosition(10,10);
     backupSprite.setColor(sf::Color(255,255,255,128));
+}
+
+void TetrisGame::updateNext()
+{
+    nextTexture->clear(sf::Color::Transparent);
+    nextShape.drawMiniature(nextTexture);
+    nextTexture->draw(nextText);
+    nextTexture->display();
+    nextSprite.setTexture(nextTexture->getTexture());
+    nextSprite.setPosition(gameSize.x*shapeSize-3*shapeSize-10,10);
+    nextSprite.setColor(sf::Color(255,255,255,128));
+}
+
+void TetrisGame::updateGhost()
+{
+    ghostShape.setGhostMode(false);
+    ghostShape = movingShape;
+    while(downMoveLegit())
+        movingShape.moveDown();
+    swap(ghostShape, movingShape);
+    ghostShape.setGhostMode(true);
 }
