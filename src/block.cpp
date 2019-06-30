@@ -241,7 +241,7 @@ void TetrisGame::setSound(sf::Sound* t_sound)
 
 float TetrisGame::getFactor() const
 {
-    return pow(1.15, floor(getScore()/500));
+    return pow(1.15, -floor(getScore()/500));
 }
 
 void TetrisGame::placeMovingShape()
